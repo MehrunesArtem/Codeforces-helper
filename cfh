@@ -1,0 +1,93 @@
+#!/usr/bin/env ruby
+require 'rubygems'
+require 'thor'
+require 'nokogiri'
+require 'open-uri'
+require 'openssl'
+
+class App < Thor
+  map 'p' => :parse
+  map 't' => :test
+  map 'r' => :reset
+  map 'n' => :new
+  map 'u' => :undo
+
+  desc 'parse CONTEST_ID', 'Parse contest statements'
+  def parse(contest_id)
+    FileUtils.rm_r Dir.glob('./build/*')
+    url = "http://codeforces.com/contest/#{contest_id}/problems"
+    page = Nokogiri::HTML open(url, {ssl_verify_mode: OpenSSL::SSL::VERIFY_NONE})
+    problems = page.css('div.problemindexholder')
+    problems.each do |problem|
+      path = "./build/#{problem['problemindex']}/tests"
+      FileUtils.mkdir_p path
+      tests = problem.css('div.sample-test > div')
+      for i in 0..tests.length-1
+        test = tests[i].css('pre')
+        test.css('br').each { |node| node.replace("\n") }
+        if i % 2 == 0
+          File.write("#{path}/#{i / 2}.i", test.text)
+        else
+          File.write("#{path}/#{i / 2}.a", test.text)
+        end
+      end
+    end
+    puts 'Statements were parsed.'
+  end
+
+  desc 'test [PROBLEM]', 'Test solution'
+  def test(problem='')
+    `g++ -O2 -fno-stack-limit -x c++ -std=c++14 main.cpp -o build/prog`
+    if problem == ''
+      `/usr/bin/time -f "%S s" build/prog < input.txt > output.txt`
+    else
+      path = "./build/#{problem.upcase}"
+      if File.directory?(path)
+        FileUtils.cp 'main.cpp', "#{path}/main.cpp"
+        FileUtils.cp 'input.txt', "#{path}/input.txt"
+        FileUtils.cp 'output.txt', "#{path}/output.txt"
+        Dir.glob("#{path}/tests/*.i") do |test|
+          filename = File.basename(test, '.i')
+          puts "\n-----TEST #{filename}-----"
+          puts "Input:"
+          puts File.open(test, 'rb').read
+          puts "\nAnswer:"
+          puts File.open("#{path}/tests/#{filename}.a", 'rb').read
+          puts "\nOutput:"
+          puts `/usr/bin/time -f "%S s\n" build/prog < #{test}`
+        end
+      else
+        puts 'Problem directory not found.'
+      end
+    end
+  end
+
+  desc 'reset', 'Clear build directory and delete contest files'
+  def reset
+    FileUtils.rm_r Dir.glob('./build/*')
+    puts 'All files from build directory were deleted.'
+  end
+
+  desc 'new', 'Create new solution'
+  def new
+    FileUtils.cp 'template.cpp', 'main.cpp'
+    File.truncate('input.txt', 0)
+    File.truncate('output.txt', 0)
+    puts 'New solution were created.'
+  end
+
+  desc 'undo PROBLEM', 'Restore solution files'
+  def undo(problem)
+    path = "./build/#{problem.upcase}"
+    if File.directory?(path)
+      FileUtils.cp "#{path}/main.cpp", 'main.cpp'
+      FileUtils.cp "#{path}/input.txt", 'input.txt'
+      FileUtils.cp "#{path}/output.txt", 'output.txt'
+      puts 'Solution files were restored.'
+    else
+      puts 'Problem directory not found.'
+    end
+  end
+end
+
+App.start
